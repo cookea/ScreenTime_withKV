@@ -4,7 +4,7 @@
 // back to KV, and returns the assistant's reply. History persists on
 // Vercel, keyed by userId, across any number of separate sessions.
 
-import { kv } from '@vercel/kv';
+import { getHistory, setHistory } from '../lib/redis.js';
 import OpenAI from 'openai';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -47,7 +47,7 @@ export default async function handler(req, res) {
 
     // Load prior history from KV — this is what makes memory persist
     // across sessions, since it's keyed on userId, not the Qualtrics session.
-    let history = (await kv.get(historyKey)) || [];
+    let history = await getHistory(historyKey);
 
     history.push({ role: 'user', content: message, ts: Date.now() });
 
@@ -68,8 +68,8 @@ export default async function handler(req, res) {
 
     history.push({ role: 'assistant', content: reply, ts: Date.now() });
 
-    // Persist to KV — this write is exactly what the stateless version removes.
-    await kv.set(historyKey, history.slice(-MAX_STORED_MESSAGES));
+    // Persist to Redis — this write is exactly what the stateless version removes.
+    await setHistory(historyKey, history.slice(-MAX_STORED_MESSAGES));
 
     return res.status(200).json({ reply });
   } catch (err) {

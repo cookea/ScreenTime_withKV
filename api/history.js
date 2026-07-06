@@ -3,7 +3,7 @@
 // when the Qualtrics widget loads, so returning users see their prior
 // messages even in a brand-new survey session.
 
-import { kv } from '@vercel/kv';
+import { getHistory } from '../lib/redis.js';
 
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*';
 
@@ -25,7 +25,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const history = (await kv.get(`chat:${userId}`)) || [];
+    const history = await getHistory(`chat:${userId}`);
     return res.status(200).json({ history });
   } catch (err) {
     console.error('history handler error:', err);

@@ -2,8 +2,9 @@
   "name": "qualtrics-chat-advisor-with-kv",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "dependencies": {
-    "@vercel/kv": "^2.0.0",
+    "ioredis": "^5.4.1",
     "openai": "^4.60.0"
   }
 }
