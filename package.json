@@ -1,0 +1,9 @@
+{
+  "name": "qualtrics-chat-advisor-with-kv",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@vercel/kv": "^2.0.0",
+    "openai": "^4.60.0"
+  }
+}
