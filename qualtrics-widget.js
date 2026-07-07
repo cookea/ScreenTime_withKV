@@ -24,6 +24,11 @@ Qualtrics.SurveyEngine.addOnload(function () {
   // (e.g. from a text-entry question or panel/SSO data) for this to work.
   var firstName = Qualtrics.SurveyEngine.getEmbeddedData('FirstName') || '';
 
+  // Optional: set an Embedded Data field named "AdvisorInstructions" to
+  // control what the AI advisor is told to do, without editing any code.
+  // If left blank/unset, the backend falls back to its built-in default.
+  var advisorInstructions = Qualtrics.SurveyEngine.getEmbeddedData('AdvisorInstructions') || '';
+
   var html =
     '<div id="' + containerId + '" class="chat-advisor-widget">' +
       '<div id="' + containerId + '-log" style="height:320px;overflow-y:auto;' +
@@ -90,7 +95,7 @@ Qualtrics.SurveyEngine.addOnload(function () {
     fetch(BACKEND_URL + '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: userId, message: message, firstName: firstName }),
+      body: JSON.stringify({ userId: userId, message: message, firstName: firstName, instructions: advisorInstructions }),
     })
       .then(function (r) { return r.json(); })
       .then(function (data) {
