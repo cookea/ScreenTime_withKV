@@ -20,6 +20,10 @@ Qualtrics.SurveyEngine.addOnload(function () {
     userId = 'anonymous-' + (Qualtrics.SurveyEngine.getEmbeddedData('ResponseID') || Date.now());
   }
 
+  // Set an Embedded Data field named "FirstName" earlier in your survey flow
+  // (e.g. from a text-entry question or panel/SSO data) for this to work.
+  var firstName = Qualtrics.SurveyEngine.getEmbeddedData('FirstName') || '';
+
   var html =
     '<div id="' + containerId + '" class="chat-advisor-widget">' +
       '<div id="' + containerId + '-log" style="height:320px;overflow-y:auto;' +
@@ -67,12 +71,12 @@ Qualtrics.SurveyEngine.addOnload(function () {
         appendMessage(m.role === 'user' ? 'user' : 'assistant', m.content);
       });
       if (!data.history || !data.history.length) {
-        appendMessage('assistant', 'Hi! How can I help you today?');
+        appendMessage('assistant', firstName ? 'Hi ' + firstName + '! How can I help you today?' : 'Hi! How can I help you today?');
       }
     })
     .catch(function () {
       statusEl.textContent = '';
-      appendMessage('assistant', 'Hi! How can I help you today?');
+      appendMessage('assistant', firstName ? 'Hi ' + firstName + '! How can I help you today?' : 'Hi! How can I help you today?');
     });
 
   function sendMessage() {
@@ -86,7 +90,7 @@ Qualtrics.SurveyEngine.addOnload(function () {
     fetch(BACKEND_URL + '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: userId, message: message }),
+      body: JSON.stringify({ userId: userId, message: message, firstName: firstName }),
     })
       .then(function (r) { return r.json(); })
       .then(function (data) {
