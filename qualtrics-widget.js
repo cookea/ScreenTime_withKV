@@ -138,6 +138,11 @@ Qualtrics.SurveyEngine.addOnload(function () {
       .then(function (data) {
         statusEl.textContent = '';
         appendMessage('assistant', data.reply || 'Sorry, something went wrong.');
+        // The advisor signals a captured screen-time estimate (already
+        // converted to minutes) via this field — save it as data.
+        if (typeof data.screenTimeMinutes === 'number' && !isNaN(data.screenTimeMinutes)) {
+          Qualtrics.SurveyEngine.setEmbeddedData('LastDayEst', data.screenTimeMinutes);
+        }
       })
       .catch(function () {
         statusEl.textContent = '';

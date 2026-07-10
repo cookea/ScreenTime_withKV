@@ -47,6 +47,25 @@ function computeDateAndSession(history) {
   return { date, session: 1 };
 }
 
+// Safety net: strips a leaked "(Date: ..., Session N)" tag if the model
+// echoes the pattern back at the start of its own reply, despite being
+// told not to. The tag is metadata for the model, never meant to be shown.
+const LEAKED_DATE_TAG_RE = /^\(Date:\s*[\d-]+,\s*Session\s*\d+\)\s*/i;
+
+// The model signals a captured screen-time estimate by appending this exact
+// machine-readable tag to the end of its reply. We extract the minute value
+// and strip the tag before the reply is ever shown to the respondent.
+const SCREEN_TIME_TAG_RE = /\[\[SCREEN_TIME_MINUTES:\s*(\d+)\s*\]\]/i;
+
+function extractScreenTimeMinutes(text) {
+  const withoutLeakedTag = text.replace(LEAKED_DATE_TAG_RE, '');
+  const match = withoutLeakedTag.match(SCREEN_TIME_TAG_RE);
+  if (!match) return { cleaned: withoutLeakedTag.trim(), minutes: null };
+  const minutes = parseInt(match[1], 10);
+  const cleaned = withoutLeakedTag.replace(SCREEN_TIME_TAG_RE, '').trim();
+  return { cleaned, minutes: Number.isFinite(minutes) ? minutes : null };
+}
+
 // --- Advisor configuration -------------------------------------------------
 // This is the fallback used when the Qualtrics survey doesn't supply its
 // own instructions via the "AdvisorInstructions" Embedded Data field. Edit
@@ -63,14 +82,31 @@ const DEFAULT_ADVISOR_INSTRUCTIONS =
 const CORE_BEHAVIOR_RULES =
   'Each message below is prefixed with "(Date: YYYY-MM-DD, Session S)" — the ' +
   'actual calendar date it was sent on, plus a finer Session marker that only ' +
-  'increases if there was a long gap within the SAME date (uncommon). Your goal ' +
-  'is to collect exactly one clear answer about the respondent\'s social media use ' +
-  'from the previous day, once per calendar Date. If you already asked on that ' +
-  'same Date and received a clear, specific answer, do not ask again that Date, ' +
-  'even if a new Session starts within it. If their answer was vague, unclear, or ' +
-  'they did not actually answer, you may ask again within the same Date to get a ' +
-  'clear answer. Once the Date changes (the respondent returns on a later day), ' +
-  'you should ask again, since it now refers to a different prior day\'s usage.';
+  'increases if there was a long gap within the SAME date (uncommon). This tag is ' +
+  'for your reference only — NEVER include it, repeat it, or mention it in your ' +
+  'own reply to the respondent. Your goal is to collect exactly one clear answer ' +
+  'about the respondent\'s social media use from the previous day, once per ' +
+  'calendar Date. If you already asked on that same Date and received a clear, ' +
+  'specific answer, do not ask again that Date, even if a new Session starts ' +
+  'within it. If their answer was vague, unclear, or they did not actually ' +
+  'answer, you may ask again within the same Date to get a clear answer. Once ' +
+  'the Date changes (the respondent returns on a later day), you should ask ' +
+  'again, since it now refers to a different prior day\'s usage.';
+
+// Also always included — governs how a captured estimate gets signaled back
+// to the survey so it can be saved as data, without the respondent ever
+// seeing the machine-readable tag itself.
+const SCREEN_TIME_CAPTURE_RULES =
+  'As soon as the respondent gives a clear, specific answer about how much ' +
+  'time they spent on social media the previous day, convert that amount to a ' +
+  'single whole number of total minutes (e.g. "an hour and a half" = 90, "2 ' +
+  'hours" = 120, "45 min" = 45, "2h 15m" = 135), and append a hidden tag on its ' +
+  'own line at the very end of your reply, in exactly this format with no other ' +
+  'text on that line: [[SCREEN_TIME_MINUTES: N]] — where N is that whole number. ' +
+  'Only include this tag once you have a clear, confident estimate; do not ' +
+  'include it while still asking a clarifying or follow-up question. Never ' +
+  'mention this tag to the respondent, explain it, or refer to it in any way — ' +
+  'it is invisible metadata, not part of the conversation.';
 
 function buildSystemPrompt(firstName, instructions, advisorName) {
   var nameLine = advisorName ? 'Your name is ' + advisorName + '. ' : '';
@@ -79,7 +115,7 @@ function buildSystemPrompt(firstName, instructions, advisorName) {
       'start of the conversation and use their name naturally where appropriate. '
     : '';
   var body = instructions && instructions.trim() ? instructions.trim() : DEFAULT_ADVISOR_INSTRUCTIONS;
-  return nameLine + greeting + CORE_BEHAVIOR_RULES + ' ' + body;
+  return nameLine + greeting + CORE_BEHAVIOR_RULES + ' ' + SCREEN_TIME_CAPTURE_RULES + ' ' + body;
 }
 
 function setCors(res) {
@@ -140,16 +176,17 @@ export default async function handler(req, res) {
       max_tokens: 500,
     });
 
-    const reply =
+    const rawReply =
       completion.choices?.[0]?.message?.content?.trim() ||
       "Sorry, I didn't catch that. Could you rephrase?";
+    const { cleaned: reply, minutes: screenTimeMinutes } = extractScreenTimeMinutes(rawReply);
 
     history.push({ role: 'assistant', content: reply, ts: Date.now(), date, session });
 
     // Persist to Redis — this write is exactly what the stateless version removes.
     await setHistory(historyKey, history.slice(-MAX_STORED_MESSAGES));
 
-    return res.status(200).json({ reply, date, session });
+    return res.status(200).json({ reply, date, session, screenTimeMinutes });
   } catch (err) {
     console.error('chat handler error:', err);
     return res.status(500).json({ error: 'Something went wrong processing your request.' });
