@@ -66,6 +66,44 @@ function extractScreenTimeMinutes(text) {
   return { cleaned, minutes: Number.isFinite(minutes) ? minutes : null };
 }
 
+// --- Tone post-processing --------------------------------------------------
+// A separate rewrite pass applied AFTER the advisor's substantive reply is
+// generated. This keeps the underlying logic/content of the conversation
+// identical across conditions — only the delivery style changes. The tone
+// instructions themselves come from Qualtrics (FriendlyTone / ControlTone,
+// selected by the Condition Embedded Data field — see qualtrics-widget.js),
+// not hardcoded here.
+async function applyToneRewrite(text, toneInstructions) {
+  if (!toneInstructions || !toneInstructions.trim()) return text;
+  try {
+    const toneCompletion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You rewrite a message to match a specified tone, without changing its meaning, ' +
+            'facts, questions, or requests. Do not add new information, remove information, or ' +
+            'answer on the respondent\'s behalf — only change how it is delivered. Return ONLY ' +
+            'the rewritten message, with no preamble, quotation marks, or commentary. Tone to ' +
+            'apply: ' + toneInstructions.trim(),
+        },
+        { role: 'user', content: text },
+      ],
+      temperature: 0.7,
+      max_tokens: 500,
+    });
+    const rewritten = toneCompletion.choices?.[0]?.message?.content?.trim();
+    if (!rewritten) return text;
+    // Defensive: strip any tags that might have leaked back in during rewriting.
+    return rewritten.replace(LEAKED_DATE_TAG_RE, '').replace(SCREEN_TIME_TAG_RE, '').trim();
+  } catch (err) {
+    console.error('tone rewrite error:', err);
+    // Fail open: show the un-toned reply rather than erroring the whole request.
+    return text;
+  }
+}
+
 // --- Advisor configuration -------------------------------------------------
 // This is the fallback used when the Qualtrics survey doesn't supply its
 // own instructions via the "AdvisorInstructions" Embedded Data field. Edit
@@ -131,7 +169,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const { userId, message, firstName, instructions, advisorName } = req.body || {};
+    const { userId, message, firstName, instructions, advisorName, toneInstructions } = req.body || {};
 
     if (!userId || typeof userId !== 'string') {
       return res.status(400).json({ error: 'userId is required' });
@@ -152,6 +190,8 @@ export default async function handler(req, res) {
       typeof instructions === 'string' ? instructions.trim().slice(0, 4000) : '';
     const safeAdvisorName =
       typeof advisorName === 'string' ? advisorName.trim().slice(0, 50) : '';
+    const safeToneInstructions =
+      typeof toneInstructions === 'string' ? toneInstructions.trim().slice(0, 2000) : '';
 
     const historyKey = `chat:${userId}`;
 
@@ -179,7 +219,8 @@ export default async function handler(req, res) {
     const rawReply =
       completion.choices?.[0]?.message?.content?.trim() ||
       "Sorry, I didn't catch that. Could you rephrase?";
-    const { cleaned: reply, minutes: screenTimeMinutes } = extractScreenTimeMinutes(rawReply);
+    const { cleaned, minutes: screenTimeMinutes } = extractScreenTimeMinutes(rawReply);
+    const reply = await applyToneRewrite(cleaned, safeToneInstructions);
 
     history.push({ role: 'assistant', content: reply, ts: Date.now(), date, session });
 

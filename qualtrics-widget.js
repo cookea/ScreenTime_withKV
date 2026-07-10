@@ -29,6 +29,25 @@ Qualtrics.SurveyEngine.addOnload(function () {
   // If left blank/unset, the backend falls back to its built-in default.
   var advisorInstructions = Qualtrics.SurveyEngine.getEmbeddedData('AdvisorInstructions') || '';
 
+  // --- Tone condition -----------------------------------------------------
+  // Set an Embedded Data field named "Condition" in Survey Flow to either
+  // "friendly" or "control" (case-insensitive) to select which tone
+  // instructions get applied as a post-processing pass on every reply,
+  // AFTER the advisor has already decided what to say. This only changes
+  // delivery style, never the substance of the response. The actual tone
+  // instructions live in two more Embedded Data fields you set yourself:
+  //   FriendlyTone   e.g. "Warm, casual, upbeat, uses light humor."
+  //   ControlTone    e.g. "Neutral, plain, professional, no embellishment."
+  // If Condition doesn't match either value (or isn't set), no tone
+  // post-processing is applied — the advisor's original reply is used as-is.
+  var condition = (Qualtrics.SurveyEngine.getEmbeddedData('Condition') || '').trim().toLowerCase();
+  var toneInstructions = '';
+  if (condition === 'friendly') {
+    toneInstructions = Qualtrics.SurveyEngine.getEmbeddedData('FriendlyTone') || '';
+  } else if (condition === 'control') {
+    toneInstructions = Qualtrics.SurveyEngine.getEmbeddedData('ControlTone') || '';
+  }
+
   // --- Greeting configuration -----------------------------------------------
   // Set these Embedded Data fields in Survey Flow to control the two
   // greeting messages without editing code. Use {{firstName}} and
@@ -132,7 +151,7 @@ Qualtrics.SurveyEngine.addOnload(function () {
     fetch(BACKEND_URL + '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: userId, message: message, firstName: firstName, advisorName: advisorName, instructions: advisorInstructions }),
+      body: JSON.stringify({ userId: userId, message: message, firstName: firstName, advisorName: advisorName, instructions: advisorInstructions, toneInstructions: toneInstructions }),
     })
       .then(function (r) { return r.json(); })
       .then(function (data) {
