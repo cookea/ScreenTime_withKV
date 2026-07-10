@@ -29,6 +29,39 @@ Qualtrics.SurveyEngine.addOnload(function () {
   // If left blank/unset, the backend falls back to its built-in default.
   var advisorInstructions = Qualtrics.SurveyEngine.getEmbeddedData('AdvisorInstructions') || '';
 
+  // --- Greeting configuration -----------------------------------------------
+  // Set these Embedded Data fields in Survey Flow to control the two
+  // greeting messages without editing code. Use {{firstName}} and
+  // {{advisorName}} as placeholders inside the templates.
+  //   AdvisorName             e.g. "Aria"
+  //   FirstSessionGreeting    shown the very first time this user has any
+  //                           conversation history (i.e. KV history is empty)
+  //   ReturningSessionGreeting shown after any prior history exists
+  var advisorName = Qualtrics.SurveyEngine.getEmbeddedData('AdvisorName') || '';
+  var firstSessionGreetingTpl =
+    Qualtrics.SurveyEngine.getEmbeddedData('FirstSessionGreeting') ||
+    'Hi {{firstName}}! I am {{advisorName}}, your AI screen-time management advisor.';
+  var returningSessionGreetingTpl =
+    Qualtrics.SurveyEngine.getEmbeddedData('ReturningSessionGreeting') ||
+    'Welcome back, {{firstName}}! How have things been going?';
+
+  function fillTemplate(template, vars) {
+    return template.replace(/\{\{(\w+)\}\}/g, function (match, key) {
+      var value = vars[key];
+      if (value) return value;
+      if (key === 'firstName') return 'there';
+      if (key === 'advisorName') return 'your AI advisor';
+      return '';
+    });
+  }
+
+  function firstSessionGreeting() {
+    return fillTemplate(firstSessionGreetingTpl, { firstName: firstName, advisorName: advisorName });
+  }
+  function returningSessionGreeting() {
+    return fillTemplate(returningSessionGreetingTpl, { firstName: firstName, advisorName: advisorName });
+  }
+
   var html =
     '<div id="' + containerId + '" class="chat-advisor-widget">' +
       '<div id="' + containerId + '-log" style="height:320px;overflow-y:auto;' +
@@ -76,12 +109,16 @@ Qualtrics.SurveyEngine.addOnload(function () {
         appendMessage(m.role === 'user' ? 'user' : 'assistant', m.content);
       });
       if (!data.history || !data.history.length) {
-        appendMessage('assistant', firstName ? 'Hi ' + firstName + '! How can I help you today?' : 'Hi! How can I help you today?');
+        appendMessage('assistant', firstSessionGreeting());
+      } else {
+        appendMessage('assistant', returningSessionGreeting());
       }
     })
     .catch(function () {
       statusEl.textContent = '';
-      appendMessage('assistant', firstName ? 'Hi ' + firstName + '! How can I help you today?' : 'Hi! How can I help you today?');
+      // Can't tell first-time vs. returning if the history fetch itself
+      // failed, so default to the first-session greeting.
+      appendMessage('assistant', firstSessionGreeting());
     });
 
   function sendMessage() {
@@ -95,7 +132,7 @@ Qualtrics.SurveyEngine.addOnload(function () {
     fetch(BACKEND_URL + '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: userId, message: message, firstName: firstName, instructions: advisorInstructions }),
+      body: JSON.stringify({ userId: userId, message: message, firstName: firstName, advisorName: advisorName, instructions: advisorInstructions }),
     })
       .then(function (r) { return r.json(); })
       .then(function (data) {

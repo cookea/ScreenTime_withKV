@@ -23,13 +23,14 @@ const DEFAULT_ADVISOR_INSTRUCTIONS =
   'supportive, and stay on topic. Remember context from earlier in this ' +
   'conversation and across the person\'s previous sessions.';
 
-function buildSystemPrompt(firstName, instructions) {
+function buildSystemPrompt(firstName, instructions, advisorName) {
+  var nameLine = advisorName ? 'Your name is ' + advisorName + '. ' : '';
   var greeting = firstName
     ? 'The respondent\'s first name is ' + firstName + '. Greet them by name at the ' +
       'start of the conversation and use their name naturally where appropriate. '
     : '';
   var body = instructions && instructions.trim() ? instructions.trim() : DEFAULT_ADVISOR_INSTRUCTIONS;
-  return greeting + body;
+  return nameLine + greeting + body;
 }
 
 function setCors(res) {
@@ -45,7 +46,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const { userId, message, firstName, instructions } = req.body || {};
+    const { userId, message, firstName, instructions, advisorName } = req.body || {};
 
     if (!userId || typeof userId !== 'string') {
       return res.status(400).json({ error: 'userId is required' });
@@ -64,6 +65,8 @@ export default async function handler(req, res) {
     // present — capped generously since it's meant to hold real guidance text.
     const safeInstructions =
       typeof instructions === 'string' ? instructions.trim().slice(0, 4000) : '';
+    const safeAdvisorName =
+      typeof advisorName === 'string' ? advisorName.trim().slice(0, 50) : '';
 
     const historyKey = `chat:${userId}`;
 
@@ -79,7 +82,7 @@ export default async function handler(req, res) {
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
-      messages: [{ role: 'system', content: buildSystemPrompt(safeFirstName, safeInstructions) }, ...contextMessages],
+      messages: [{ role: 'system', content: buildSystemPrompt(safeFirstName, safeInstructions, safeAdvisorName) }, ...contextMessages],
       temperature: 0.7,
       max_tokens: 500,
     });
