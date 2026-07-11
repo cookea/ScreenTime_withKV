@@ -5,7 +5,7 @@
  *
  * Before use:
  *  1. Replace BACKEND_URL with this version's deployed Vercel URL.
- *  2. Set up how "UserId" gets populated (SSO, panel field, or login question).
+ *  2. Set up how "Login" gets populated (SSO, panel field, or login question).
  */
 
 Qualtrics.SurveyEngine.addOnload(function () {
@@ -14,15 +14,15 @@ Qualtrics.SurveyEngine.addOnload(function () {
 
   var containerId = 'chat-advisor-' + qthis.questionId;
 
-  var userId = qthis.getEmbeddedData ? qthis.getEmbeddedData('UserId') : null;
-  if (!userId) userId = Qualtrics.SurveyEngine.getEmbeddedData('UserId');
+  var userId = qthis.getEmbeddedData ? qthis.getEmbeddedData('Login') : null;
+  if (!userId) userId = Qualtrics.SurveyEngine.getEmbeddedData('Login');
   if (!userId) {
     userId = 'anonymous-' + (Qualtrics.SurveyEngine.getEmbeddedData('ResponseID') || Date.now());
   }
 
-  // Set an Embedded Data field named "FirstName" earlier in your survey flow
+  // Set an Embedded Data field named "Fname" earlier in your survey flow
   // (e.g. from a text-entry question or panel/SSO data) for this to work.
-  var firstName = Qualtrics.SurveyEngine.getEmbeddedData('FirstName') || '';
+  var firstName = Qualtrics.SurveyEngine.getEmbeddedData('Fname') || '';
 
   // Optional: set an Embedded Data field named "AdvisorInstructions" to
   // control what the AI advisor is told to do, without editing any code.
@@ -195,5 +195,5 @@ Qualtrics.SurveyEngine.addOnload(function () {
     if (e.key === 'Enter') sendMessage();
   });
 
-  Qualtrics.SurveyEngine.setEmbeddedData('UserId', userId);
+  Qualtrics.SurveyEngine.setEmbeddedData('Login', userId);
 });
