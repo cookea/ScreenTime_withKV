@@ -48,6 +48,12 @@ Qualtrics.SurveyEngine.addOnload(function () {
     toneInstructions = Qualtrics.SurveyEngine.getEmbeddedData('ControlTone') || '';
   }
 
+  // Optional: set an Embedded Data field named "CrisisClosingMessage" to
+  // override the fixed message shown if a respondent's message is flagged
+  // by the safety check. If you customize this, keep real crisis resources
+  // in it — see DEFAULT_CRISIS_CLOSING_MESSAGE in api/chat.js for the default.
+  var crisisClosingMessage = Qualtrics.SurveyEngine.getEmbeddedData('CrisisClosingMessage') || '';
+
   // --- Greeting configuration -----------------------------------------------
   // Set these Embedded Data fields in Survey Flow to control the two
   // greeting messages without editing code. Use {{firstName}} and
@@ -140,7 +146,10 @@ Qualtrics.SurveyEngine.addOnload(function () {
       appendMessage('assistant', firstSessionGreeting());
     });
 
+  var conversationEnded = false;
+
   function sendMessage() {
+    if (conversationEnded) return;
     var message = inputEl.value.trim();
     if (!message) return;
     appendMessage('user', message);
@@ -151,7 +160,7 @@ Qualtrics.SurveyEngine.addOnload(function () {
     fetch(BACKEND_URL + '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: userId, message: message, firstName: firstName, advisorName: advisorName, instructions: advisorInstructions, toneInstructions: toneInstructions }),
+      body: JSON.stringify({ userId: userId, message: message, firstName: firstName, advisorName: advisorName, instructions: advisorInstructions, toneInstructions: toneInstructions, crisisClosingMessage: crisisClosingMessage }),
     })
       .then(function (r) { return r.json(); })
       .then(function (data) {
@@ -162,13 +171,22 @@ Qualtrics.SurveyEngine.addOnload(function () {
         if (typeof data.screenTimeMinutes === 'number' && !isNaN(data.screenTimeMinutes)) {
           Qualtrics.SurveyEngine.setEmbeddedData('LastDayEst', data.screenTimeMinutes);
         }
+        // The advisor's message was flagged by the safety check and the
+        // conversation has been gently ended — lock the input so no further
+        // messages can be sent in this widget instance.
+        if (data.endConversation) {
+          conversationEnded = true;
+          inputEl.disabled = true;
+          inputEl.placeholder = 'This conversation has ended.';
+          sendBtn.disabled = true;
+        }
       })
       .catch(function () {
         statusEl.textContent = '';
         appendMessage('assistant', 'Error reaching the advisor. Please try again.');
       })
       .finally(function () {
-        sendBtn.disabled = false;
+        if (!conversationEnded) sendBtn.disabled = false;
       });
   }
 
