@@ -9,7 +9,6 @@ import OpenAI from 'openai';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*';
 const MAX_HISTORY_MESSAGES = 20;
 const MAX_STORED_MESSAGES = 200;
 
@@ -258,14 +257,34 @@ function buildSystemPrompt(firstName, instructions, advisorName) {
   return nameLine + greeting + CORE_BEHAVIOR_RULES + ' ' + SCREEN_TIME_CAPTURE_RULES + ' ' + body;
 }
 
-function setCors(res) {
-  res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
+// Comma-separated list of allowed origins, e.g.
+// "https://ufl.yul1.qualtrics.com,https://survey.warrington.ufl.edu" — lets
+// both Qualtrics preview and your live/distributed survey work at once
+// without having to swap this every time you switch between them. A single
+// "*" allows any origin (fine for early testing, not recommended once real
+// respondent data is involved).
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGIN || '*')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+function setCors(req, res) {
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.includes('*')) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  } else if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  // If the request's origin doesn't match anything in the allowlist, we
+  // simply don't set the header — the browser then correctly blocks the
+  // response, same end result as before but per-origin instead of global.
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
 
 export default async function handler(req, res) {
-  setCors(res);
+  setCors(req, res);
 
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
