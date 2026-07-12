@@ -51,18 +51,49 @@ function computeDateAndSession(history) {
 // told not to. The tag is metadata for the model, never meant to be shown.
 const LEAKED_DATE_TAG_RE = /^\(Date:\s*[\d-]+,\s*Session\s*\d+\)\s*/i;
 
-// The model signals a captured screen-time estimate by appending this exact
-// machine-readable tag to the end of its reply. We extract the minute value
-// and strip the tag before the reply is ever shown to the respondent.
-const SCREEN_TIME_TAG_RE = /\[\[SCREEN_TIME_MINUTES:\s*(\d+)\s*\]\]/i;
+function stripLeakedDateTag(text) {
+  return text.replace(LEAKED_DATE_TAG_RE, '').trim();
+}
 
-function extractScreenTimeMinutes(text) {
-  const withoutLeakedTag = text.replace(LEAKED_DATE_TAG_RE, '');
-  const match = withoutLeakedTag.match(SCREEN_TIME_TAG_RE);
-  if (!match) return { cleaned: withoutLeakedTag.trim(), minutes: null };
-  const minutes = parseInt(match[1], 10);
-  const cleaned = withoutLeakedTag.replace(SCREEN_TIME_TAG_RE, '').trim();
-  return { cleaned, minutes: Number.isFinite(minutes) ? minutes : null };
+// --- Screen-time capture ----------------------------------------------
+// Run as its own dedicated call reviewing the RESPONDENT's message
+// directly — not signaled via a hidden tag the main advisor has to
+// remember to append. A tag buried in a long, multi-part system prompt is
+// a fragile signal (easy for the model to forget under instruction load);
+// asking a narrowly-scoped question in isolation is far more reliable,
+// same pattern as the safety classifier above.
+async function extractScreenTimeMinutes(message, recentContext) {
+  try {
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You review a message from a survey respondent who is being asked how much time they ' +
+            'spent on social media the previous day. Determine whether the respondent\'s LATEST ' +
+            'message gives a clear, specific answer (a duration or a number) — not vague language ' +
+            'like "not much," "a lot," or a non-answer. If it does, respond with ONLY a whole number: ' +
+            'the total number of minutes that duration represents (e.g. "an hour and a half" -> 90, ' +
+            '"2 hours" -> 120, "45 min" -> 45, "2h 15m" -> 135, "90" -> 90). If it does NOT give a ' +
+            'clear answer, respond with ONLY the word NONE.',
+        },
+        {
+          role: 'user',
+          content:
+            (recentContext ? 'Recent conversation context:\n' + recentContext + '\n\n' : '') +
+            'Latest message to evaluate: ' + message,
+        },
+      ],
+      temperature: 0,
+      max_tokens: 10,
+    });
+    const answer = completion.choices?.[0]?.message?.content?.trim() || '';
+    return /^\d+$/.test(answer) ? parseInt(answer, 10) : null;
+  } catch (err) {
+    console.error('screen time extraction error:', err);
+    return null;
+  }
 }
 
 // --- Tone post-processing --------------------------------------------------
@@ -94,8 +125,9 @@ async function applyToneRewrite(text, toneInstructions) {
     });
     const rewritten = toneCompletion.choices?.[0]?.message?.content?.trim();
     if (!rewritten) return text;
-    // Defensive: strip any tags that might have leaked back in during rewriting.
-    return rewritten.replace(LEAKED_DATE_TAG_RE, '').replace(SCREEN_TIME_TAG_RE, '').trim();
+    // Defensive: strip any leaked date/session tag that might have crept
+    // back in during rewriting.
+    return stripLeakedDateTag(rewritten);
   } catch (err) {
     console.error('tone rewrite error:', err);
     // Fail open: show the un-toned reply rather than erroring the whole request.
@@ -232,21 +264,6 @@ const CORE_BEHAVIOR_RULES =
   'the Date changes (the respondent returns on a later day), you should ask ' +
   'again, since it now refers to a different prior day\'s usage.';
 
-// Also always included — governs how a captured estimate gets signaled back
-// to the survey so it can be saved as data, without the respondent ever
-// seeing the machine-readable tag itself.
-const SCREEN_TIME_CAPTURE_RULES =
-  'As soon as the respondent gives a clear, specific answer about how much ' +
-  'time they spent on social media the previous day, convert that amount to a ' +
-  'single whole number of total minutes (e.g. "an hour and a half" = 90, "2 ' +
-  'hours" = 120, "45 min" = 45, "2h 15m" = 135), and append a hidden tag on its ' +
-  'own line at the very end of your reply, in exactly this format with no other ' +
-  'text on that line: [[SCREEN_TIME_MINUTES: N]] — where N is that whole number. ' +
-  'Only include this tag once you have a clear, confident estimate; do not ' +
-  'include it while still asking a clarifying or follow-up question. Never ' +
-  'mention this tag to the respondent, explain it, or refer to it in any way — ' +
-  'it is invisible metadata, not part of the conversation.';
-
 function buildSystemPrompt(firstName, instructions, advisorName) {
   var nameLine = advisorName ? 'Your name is ' + advisorName + '. ' : '';
   var greeting = firstName
@@ -254,7 +271,7 @@ function buildSystemPrompt(firstName, instructions, advisorName) {
       'start of the conversation and use their name naturally where appropriate. '
     : '';
   var body = instructions && instructions.trim() ? instructions.trim() : DEFAULT_ADVISOR_INSTRUCTIONS;
-  return nameLine + greeting + CORE_BEHAVIOR_RULES + ' ' + SCREEN_TIME_CAPTURE_RULES + ' ' + body;
+  return nameLine + greeting + CORE_BEHAVIOR_RULES + ' ' + body;
 }
 
 // Comma-separated list of allowed origins, e.g.
@@ -327,12 +344,16 @@ export default async function handler(req, res) {
 
     history.push({ role: 'user', content: message, ts: Date.now(), date, session });
 
-    // --- Safety check: run BEFORE the normal advisor pipeline -----------
+    // --- Safety check & screen-time extraction: both run on the ---------
+    // RESPONDENT's message, independent of what the advisor says back.
     const recentContext = history
       .slice(-7, -1)
       .map((m) => m.role.toUpperCase() + ': ' + m.content)
       .join('\n');
-    const flagged = await isDistressFlagged(message, recentContext);
+    const [flagged, screenTimeMinutes] = await Promise.all([
+      isDistressFlagged(message, recentContext),
+      extractScreenTimeMinutes(message, recentContext),
+    ]);
 
     if (flagged) {
       history.push({ role: 'assistant', content: safeCrisisClosingMessage, ts: Date.now(), date, session });
@@ -369,7 +390,7 @@ export default async function handler(req, res) {
     const rawReply =
       completion.choices?.[0]?.message?.content?.trim() ||
       "Sorry, I didn't catch that. Could you rephrase?";
-    const { cleaned, minutes: screenTimeMinutes } = extractScreenTimeMinutes(rawReply);
+    const cleaned = stripLeakedDateTag(rawReply);
     const reply = await applyToneRewrite(cleaned, safeToneInstructions);
 
     history.push({ role: 'assistant', content: reply, ts: Date.now(), date, session });
