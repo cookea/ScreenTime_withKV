@@ -87,6 +87,27 @@ Qualtrics.SurveyEngine.addOnload(function () {
     return fillTemplate(returningSessionGreetingTpl, { firstName: firstName, advisorName: advisorName });
   }
 
+  // --- Flat transcript recording -------------------------------------------
+  // Records each (advisor prompt, respondent reply) pair into sequential
+  // Embedded Data fields — firstprompt1/firstresponse1, firstprompt2/
+  // firstresponse2, etc. — up to firstprompt30/firstresponse30. These must
+  // already exist as Embedded Data fields in Survey Flow. Only records THIS
+  // session's live exchanges (starting from the greeting shown on this
+  // load), not any older history replayed in from a prior day — each day is
+  // a separate Qualtrics response, so each gets its own fresh set of 30.
+  var MAX_RECORDED_EXCHANGES = 30;
+  var exchangeIndex = 1;
+
+  function recordPrompt(text) {
+    if (exchangeIndex > MAX_RECORDED_EXCHANGES) return;
+    Qualtrics.SurveyEngine.setEmbeddedData('firstprompt' + exchangeIndex, text);
+  }
+  function recordResponse(text) {
+    if (exchangeIndex > MAX_RECORDED_EXCHANGES) return;
+    Qualtrics.SurveyEngine.setEmbeddedData('firstresponse' + exchangeIndex, text);
+    exchangeIndex++;
+  }
+
   var html =
     '<div id="' + containerId + '" class="chat-advisor-widget">' +
       '<div id="' + containerId + '-log" style="height:320px;overflow-y:auto;' +
@@ -134,16 +155,22 @@ Qualtrics.SurveyEngine.addOnload(function () {
         appendMessage(m.role === 'user' ? 'user' : 'assistant', m.content);
       });
       if (!data.history || !data.history.length) {
-        appendMessage('assistant', firstSessionGreeting());
+        var greeting1 = firstSessionGreeting();
+        appendMessage('assistant', greeting1);
+        recordPrompt(greeting1);
       } else {
-        appendMessage('assistant', returningSessionGreeting());
+        var greeting2 = returningSessionGreeting();
+        appendMessage('assistant', greeting2);
+        recordPrompt(greeting2);
       }
     })
     .catch(function () {
       statusEl.textContent = '';
       // Can't tell first-time vs. returning if the history fetch itself
       // failed, so default to the first-session greeting.
-      appendMessage('assistant', firstSessionGreeting());
+      var greeting3 = firstSessionGreeting();
+      appendMessage('assistant', greeting3);
+      recordPrompt(greeting3);
     });
 
   var conversationEnded = false;
@@ -153,6 +180,7 @@ Qualtrics.SurveyEngine.addOnload(function () {
     var message = inputEl.value.trim();
     if (!message) return;
     appendMessage('user', message);
+    recordResponse(message);
     inputEl.value = '';
     sendBtn.disabled = true;
     statusEl.textContent = 'Thinking…';
@@ -165,7 +193,9 @@ Qualtrics.SurveyEngine.addOnload(function () {
       .then(function (r) { return r.json(); })
       .then(function (data) {
         statusEl.textContent = '';
-        appendMessage('assistant', data.reply || 'Sorry, something went wrong.');
+        var reply = data.reply || 'Sorry, something went wrong.';
+        appendMessage('assistant', reply);
+        recordPrompt(reply);
         // The advisor signals a captured screen-time estimate (already
         // converted to minutes) via this field — save it as data.
         if (typeof data.screenTimeMinutes === 'number' && !isNaN(data.screenTimeMinutes)) {
